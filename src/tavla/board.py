@@ -678,12 +678,15 @@ end run
 def attach(session_id: str, title: str = "", dry_run: bool = False, cwd: str = "") -> str:
     """Open a new iTerm2 tab attached to the session; detaching leaves the tab's shell open.
 
+    The tab closes itself once the session is deleted: `claude attach` returns when its session is
+    removed, and the shell then exits because the job directory is gone.
+
     The tab first moves to the session's own directory: waking a finished session starts Claude in
     the shell's directory, which in a new tab is the home directory. The tab is named with an OSC 1
     escape from its own shell, as iTerm2 does not show a name set through AppleScript, and Claude
     Code's own terminal title is switched off so the tab keeps that name."""
     name = shlex.quote(title or session_id)
-    cmd = f"printf '\\033]1;%s\\007' {name} && cd {shlex.quote(cwd or str(SESSION_CWD))} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}"
+    cmd = f"printf '\\033]1;%s\\007' {name} && cd {shlex.quote(cwd or str(SESSION_CWD))} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}; [ -d {shlex.quote(str(JOBS / session_id))} ] || exit"
     argv = ["osascript", "-e", ITERM_SCRIPT, cmd]
     if not dry_run:
         run(argv, timeout=20)
@@ -781,9 +784,13 @@ def delete_session(session_id: str) -> str:
     """Delete a background session and its worktree, and drop its manual links.
 
     claude rm refuses a worktree with unpushed commits; its message, raised here, names the flag that discards them."""
-    out = run(["claude", "rm", session_id], timeout=60).strip()
-    unlink(session_id, None)
-    return out
+    links = load_links()
+    unlink(session_id, None)  # before the delete: a session deleting itself does not outlive `claude rm`
+    try:
+        return run(["claude", "rm", session_id], timeout=60).strip()
+    except Exception:
+        save_links(links)
+        raise
 
 
 def link(session_id: str, issue_key: str) -> None:
@@ -808,6 +815,14 @@ def resolve_session(needle: str) -> dict:
         ids = ", ".join(s["id"] for s in matches) or "none"
         raise ValueError(f'"{needle}" matches {ids}; use an exact id')
     return matches[0]
+
+
+def own_session() -> dict:
+    """The session this process runs inside, from the environment Claude Code gives its tools."""
+    job, sid = os.environ.get("CLAUDE_JOB_DIR", ""), os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not job and not sid:
+        raise ValueError("--self works only inside a Claude Code session")
+    return {"id": Path(job).name if job else sid[:8], "sessionId": sid, "name": "this session", "isInteractive": not job}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -839,10 +854,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("stop", help="stop a background session, keeping its conversation")
     p.add_argument("session")
     p = sub.add_parser("rm", help="delete a background session and its worktree")
-    p.add_argument("session")
+    p.add_argument("session", nargs="?")
+    p.add_argument("--self", dest="own", action="store_true", help="the session this command runs inside")
     p = sub.add_parser("link", help="link a session to an issue")
-    p.add_argument("session")
-    p.add_argument("issue")
+    p.add_argument("target", nargs="*", metavar="session|issue", help="<session> <issue>, or with --self only <issue>")
+    p.add_argument("--self", dest="own", action="store_true", help="the session this command runs inside")
     p = sub.add_parser("unlink", help="remove manual links")
     p.add_argument("session")
     p.add_argument("issue", nargs="?")
@@ -867,12 +883,17 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("no --repo given and no issue_repos in config.toml")
             print(create_issue(a.repo, a.title, a.body)["url"])
         elif a.cmd in ("stop", "rm"):
-            s = resolve_session(a.session)
+            own = getattr(a, "own", False)
+            if own == bool(a.session):
+                raise ValueError("give a session or --self")
+            s = own_session() if own else resolve_session(a.session)
             if s["isInteractive"]:
                 raise ValueError(f"{s['id']} is an interactive session running in its own terminal; only background sessions stop or delete")
             print(stop_session(s["id"]) if a.cmd == "stop" else delete_session(s["id"]))
         elif a.cmd == "link":
-            s, ref = resolve_session(a.session), ref_from_arg(a.issue)
+            if len(a.target) != (1 if a.own else 2):
+                raise ValueError("expected --self <issue>" if a.own else "expected <session> <issue>")
+            s, ref = own_session() if a.own else resolve_session(a.target[0]), ref_from_arg(a.target[-1])
             if not ref:
                 raise ValueError("expected an issue URL or owner/repo#N")
             link(s["id"], key_of(ref))

@@ -1,0 +1,11 @@
+{
+  "name": "tavla",
+  "owner": { "name": "Alexander Lindeskär" },
+  "plugins": [
+    {
+      "name": "tavla",
+      "source": "./",
+      "description": "Skills for Claude Code sessions shown on a Tavla board: link the session to an issue, or remove it when done."
+    }
+  ]
+}

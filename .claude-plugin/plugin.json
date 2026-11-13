@@ -1,0 +1,7 @@
+{
+  "name": "tavla",
+  "description": "Skills for Claude Code sessions shown on a Tavla board: link the session to an issue, or remove it when done.",
+  "author": { "name": "Alexander Lindeskär" },
+  "repository": "https://github.com/lindeskar/tavla",
+  "license": "MIT"
+}

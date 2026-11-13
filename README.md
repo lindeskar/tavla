@@ -105,7 +105,7 @@ A new issue is assigned to you unless you untick it in the dialog, and goes stra
 
 New sessions start in `session_dir` from the config file, or in the directory `tavla` was started in.
 
-Attaching opens a new tab in the current iTerm2 window, moves to the session's own directory (or `session_dir` when it has none recorded) and runs `claude attach <id>` there, so waking a finished session doesn't start it in your home directory. The tab is named after the session with an OSC 1 escape from its own shell (iTerm2 does not show a name set through AppleScript), and `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` stops Claude Code from overwriting that name with its own title. Detaching leaves the tab's shell open. The first attach asks macOS for permission to control iTerm2.
+Attaching opens a new tab in the current iTerm2 window, moves to the session's own directory (or `session_dir` when it has none recorded) and runs `claude attach <id>` there, so waking a finished session doesn't start it in your home directory. The tab is named after the session with an OSC 1 escape from its own shell (iTerm2 does not show a name set through AppleScript), and `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` stops Claude Code from overwriting that name with its own title. Detaching leaves the tab's shell open; deleting the session (`ctrl+x` `d`, `tavla rm`, `claude rm`) closes the tab, provided the iTerm2 profile closes a session when its shell exits. The first attach asks macOS for permission to control iTerm2.
 
 ## Core CLI
 
@@ -119,10 +119,25 @@ tavla new <issue> [prompt...]
 tavla start <prompt...> [--name name]
 tavla create <title> [--repo owner/repo] [--body text]
 tavla stop <session>
-tavla rm <session>
-tavla link <session> <issue>
+tavla rm <session> | --self
+tavla link <session> <issue> | --self <issue>
 tavla unlink <session> [issue]
 ```
+
+## Claude Code plugin
+
+The repository is also a Claude Code plugin, for use inside the sessions the board shows:
+
+```
+/plugin install tavla --marketplace lindeskar/tavla
+```
+
+| Skill | Does |
+|---|---|
+| `/tavla:link <issue>` | Links the session it runs in to an issue (`tavla link --self`), so the session shows on that card. Claude may also run it itself when a session starts on an issue its first prompt did not name |
+| `/tavla:done` | Deletes the background session it runs in and its worktree (`tavla rm --self`), which also closes a tab Tavla attached to it. Only you can run it, and it stops when `claude rm` refuses, as it does for unpushed commits |
+
+Both need the `tavla` command on `PATH`.
 
 ## Where the data comes from
 
