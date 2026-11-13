@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff check)",
+      "Bash(uv run ruff check *)",
+      "Bash(uv run ruff format)",
+      "Bash(uv run ruff format *)",
+      "Bash(uv run tavla dump)",
+      "Bash(uv run tavla dump *)",
+      "Bash(uv run tavla json)",
+      "Bash(git push origin main)"
+    ],
+    "ask": [
+      "Bash(uv run tavla new *)",
+      "Bash(uv run tavla start *)",
+      "Bash(uv run tavla create *)",
+      "Bash(uv run tavla stop *)",
+      "Bash(uv run tavla rm *)",
+      "Bash(uv run tavla link *)",
+      "Bash(uv run tavla unlink *)",
+      "Bash(tavla new *)",
+      "Bash(tavla start *)",
+      "Bash(tavla create *)",
+      "Bash(tavla stop *)",
+      "Bash(tavla rm *)",
+      "Bash(tavla link *)",
+      "Bash(tavla unlink *)"
+    ]
+  }
+}
