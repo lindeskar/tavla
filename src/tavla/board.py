@@ -15,6 +15,7 @@ import sys
 import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
 
 JOBS = Path.home() / ".claude" / "jobs"
@@ -99,7 +100,7 @@ class RateLimited(RuntimeError):
 
 
 def run(argv: list[str], timeout: int = 60, cwd: Path | None = None) -> str:
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd, check=False)
     if p.returncode != 0:
         msg = f"{' '.join(argv[:3])}: {(p.stderr or p.stdout).strip()[:200]}"
         raise RateLimited(msg) if "rate limit" in msg.lower() else RuntimeError(msg)
@@ -111,7 +112,7 @@ def graphql(query: str, variables: dict | None = None) -> dict:
     argv = ["gh", "api", "graphql", "-f", f"query={query}"]
     for name, value in (variables or {}).items():
         argv += ["-F" if isinstance(value, int) else "-f", f"{name}={value}"]
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
     body = json.loads(p.stdout or "{}")
     # Judge only gh's own message and GraphQL's error entries: data (an issue title) may say "rate limit" too.
     messages = [p.stderr, *(f"{e.get('type', '')} {e.get('message', '')}" for e in body.get("errors") or [])]
@@ -123,7 +124,7 @@ def graphql(query: str, variables: dict | None = None) -> dict:
 def backoff_until() -> float:
     try:
         return float(json.loads((CONFIG / "backoff.json").read_text())["until"])
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+    except FileNotFoundError, json.JSONDecodeError, KeyError, ValueError:
         return 0.0
 
 
@@ -133,18 +134,14 @@ def start_backoff() -> float:
     The GraphQL budget is read from GraphQL's own rateLimit: the REST /rate_limit graphql bucket can
     report plenty remaining while GraphQL itself refuses every query. `gh search` spends GraphQL too."""
     until = time.time() + 90
-    try:
+    with suppress(Exception):  # the 90s default stands
         rl = (graphql("{ rateLimit { remaining resetAt } }").get("data") or {}).get("rateLimit") or {}
         if rl.get("remaining") == 0:
             until = max(until, parse_time_ms(rl["resetAt"]) / 1000)
-    except Exception:  # noqa: BLE001 - the 90s default stands
-        pass
-    try:
+    with suppress(Exception):
         search = json.loads(run(["gh", "api", "rate_limit"], timeout=20))["resources"]["search"]
         if search["remaining"] == 0:
             until = max(until, float(search["reset"]))
-    except Exception:  # noqa: BLE001
-        pass
     CONFIG.mkdir(parents=True, exist_ok=True)
     (CONFIG / "backoff.json").write_text(json.dumps({"until": until}))
     return until
@@ -196,7 +193,7 @@ def parse_time_ms(value: str | None) -> int:
     try:
         from datetime import datetime
 
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        return int(datetime.fromisoformat(value).timestamp() * 1000)
     except ValueError:
         return 0
 
@@ -207,7 +204,7 @@ def parse_time_ms(value: str | None) -> int:
 def load_links() -> dict[str, list[str]]:
     try:
         return json.loads((CONFIG / "links.json").read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         return {}
 
 
@@ -222,7 +219,7 @@ def save_links(links: dict[str, list[str]]) -> None:
 def load_hidden() -> set[str]:
     try:
         return set(json.loads((CONFIG / "hidden.json").read_text()))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         return set()
 
 
@@ -242,7 +239,7 @@ def read_sessions(links: dict[str, list[str]], errors: list[str]) -> list[tuple[
     for d in sorted(JOBS.iterdir()) if JOBS.is_dir() else []:
         try:
             st = json.loads((d / "state.json").read_text())
-        except (FileNotFoundError, NotADirectoryError, json.JSONDecodeError):
+        except FileNotFoundError, NotADirectoryError, json.JSONDecodeError:
             continue
         pr_hrefs = [c["href"] for c in st.get("children") or [] if c.get("kind") == "pr" and c.get("href")]
         refs = parse_refs(st.get("intent") or "") + parse_refs(" ".join(pr_hrefs))
@@ -330,7 +327,7 @@ def read_cache(name: str, ttl: float, force: bool, offline: bool) -> tuple[list 
     try:
         cached = json.loads((CONFIG / name).read_text())
         items, age = cached["items"], time.time() - cached["at"]
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+    except FileNotFoundError, json.JSONDecodeError, KeyError, TypeError:
         return None, False
     return items, offline or (not force and age < ttl)
 
@@ -414,7 +411,7 @@ def resolve_refs(refs: list[Ref], errors: list[str], force: bool = False, offlin
     cache_file = CONFIG / "meta-cache.json"
     try:
         cache: dict[str, dict] = json.loads(cache_file.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         cache = {}
     now = time.time()
     uniq = list({key_of(r): r for r in refs}.values())
@@ -681,12 +678,15 @@ end run
 def attach(session_id: str, title: str = "", dry_run: bool = False, cwd: str = "") -> str:
     """Open a new iTerm2 tab attached to the session; detaching leaves the tab's shell open.
 
+    The tab closes itself once the session is deleted: `claude attach` returns when its session is
+    removed, and the shell then exits because the job directory is gone.
+
     The tab first moves to the session's own directory: waking a finished session starts Claude in
     the shell's directory, which in a new tab is the home directory. The tab is named with an OSC 1
     escape from its own shell, as iTerm2 does not show a name set through AppleScript, and Claude
     Code's own terminal title is switched off so the tab keeps that name."""
     name = shlex.quote(title or session_id)
-    cmd = f"printf '\\033]1;%s\\007' {name} && cd {shlex.quote(cwd or str(SESSION_CWD))} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}"
+    cmd = f"printf '\\033]1;%s\\007' {name} && cd {shlex.quote(cwd or str(SESSION_CWD))} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}; [ -d {shlex.quote(str(JOBS / session_id))} ] || exit"
     argv = ["osascript", "-e", ITERM_SCRIPT, cmd]
     if not dry_run:
         run(argv, timeout=20)
@@ -742,7 +742,7 @@ def create_issue(repo: str, title: str, body: str = "", assign: bool = True) -> 
             cached = json.loads((CONFIG / "assigned-cache.json").read_text())
             cached["items"] = [issue, *cached["items"]]
             (CONFIG / "assigned-cache.json").write_text(json.dumps(cached))
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except OSError, json.JSONDecodeError, KeyError, TypeError:
             pass  # no cache yet: the next refresh searches anyway
     return {"key": key_of((m[1], m[2], int(m[3]))), "url": url, "title": issue["title"]}
 
@@ -770,7 +770,7 @@ def start_progress(card: dict) -> bool:
             if it.get("itemId") == item["itemId"]:
                 it["status"] = option["name"]
         (CONFIG / "projects-cache.json").write_text(json.dumps(cached))
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+    except OSError, json.JSONDecodeError, KeyError, TypeError:
         pass  # no cache: the next refresh fetches the projects anyway
     return True
 
@@ -784,9 +784,13 @@ def delete_session(session_id: str) -> str:
     """Delete a background session and its worktree, and drop its manual links.
 
     claude rm refuses a worktree with unpushed commits; its message, raised here, names the flag that discards them."""
-    out = run(["claude", "rm", session_id], timeout=60).strip()
-    unlink(session_id, None)
-    return out
+    links = load_links()
+    unlink(session_id, None)  # before the delete: a session deleting itself does not outlive `claude rm`
+    try:
+        return run(["claude", "rm", session_id], timeout=60).strip()
+    except Exception:
+        save_links(links)
+        raise
 
 
 def link(session_id: str, issue_key: str) -> None:
@@ -811,6 +815,14 @@ def resolve_session(needle: str) -> dict:
         ids = ", ".join(s["id"] for s in matches) or "none"
         raise ValueError(f'"{needle}" matches {ids}; use an exact id')
     return matches[0]
+
+
+def own_session() -> dict:
+    """The session this process runs inside, from the environment Claude Code gives its tools."""
+    job, sid = os.environ.get("CLAUDE_JOB_DIR", ""), os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not job and not sid:
+        raise ValueError("--self works only inside a Claude Code session")
+    return {"id": Path(job).name if job else sid[:8], "sessionId": sid, "name": "this session", "isInteractive": not job}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -842,10 +854,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("stop", help="stop a background session, keeping its conversation")
     p.add_argument("session")
     p = sub.add_parser("rm", help="delete a background session and its worktree")
-    p.add_argument("session")
+    p.add_argument("session", nargs="?")
+    p.add_argument("--self", dest="own", action="store_true", help="the session this command runs inside")
     p = sub.add_parser("link", help="link a session to an issue")
-    p.add_argument("session")
-    p.add_argument("issue")
+    p.add_argument("target", nargs="*", metavar="session|issue", help="<session> <issue>, or with --self only <issue>")
+    p.add_argument("--self", dest="own", action="store_true", help="the session this command runs inside")
     p = sub.add_parser("unlink", help="remove manual links")
     p.add_argument("session")
     p.add_argument("issue", nargs="?")
@@ -870,12 +883,17 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("no --repo given and no issue_repos in config.toml")
             print(create_issue(a.repo, a.title, a.body)["url"])
         elif a.cmd in ("stop", "rm"):
-            s = resolve_session(a.session)
+            own = getattr(a, "own", False)
+            if own == bool(a.session):
+                raise ValueError("give a session or --self")
+            s = own_session() if own else resolve_session(a.session)
             if s["isInteractive"]:
                 raise ValueError(f"{s['id']} is an interactive session running in its own terminal; only background sessions stop or delete")
             print(stop_session(s["id"]) if a.cmd == "stop" else delete_session(s["id"]))
         elif a.cmd == "link":
-            s, ref = resolve_session(a.session), ref_from_arg(a.issue)
+            if len(a.target) != (1 if a.own else 2):
+                raise ValueError("expected --self <issue>" if a.own else "expected <session> <issue>")
+            s, ref = own_session() if a.own else resolve_session(a.target[0]), ref_from_arg(a.target[-1])
             if not ref:
                 raise ValueError("expected an issue URL or owner/repo#N")
             link(s["id"], key_of(ref))

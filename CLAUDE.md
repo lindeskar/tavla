@@ -45,4 +45,5 @@
 ## Git
 
 - Commit directly on `main` and push every commit right after making it; nothing is left committed but unpushed.
+- release-please cuts releases from the commit types: `feat` and `fix` (and `!` for a breaking change) open or update the release PR, which bumps `version` in `pyproject.toml` and `uv.lock` and writes `CHANGELOG.md`; never edit those by hand. Config is in `.github/release-please-config.json`.
 - Messages: `<type>: <what the user now sees or can do>`, one line, the behaviour rather than the mechanism (`fix: attached iTerm tabs are named with an OSC 1 escape, since iTerm2 does not show a name set through AppleScript`).

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,7 +9,7 @@ from tavla import board as core
 
 REAL_GRAPHQL = core.graphql  # the autouse fixture swaps in a fake
 
-NOW = datetime.now(timezone.utc).isoformat()
+NOW = datetime.now(UTC).isoformat()
 JOBS = {
     "aaaa1111": {"name": "fix flaky deploy", "state": "blocked", "intent": "https://github.com/acme/infra/issues/7 look", "updatedAt": NOW, "cwd": "/Users/me/Code/my repo"},
     "bbbb2222": {"name": "chart bump", "state": "working", "intent": "bump it", "children": [{"kind": "pr", "href": "https://github.com/acme/charts/pull/40"}], "updatedAt": NOW},
@@ -168,7 +168,10 @@ def test_paused_board_links_sessions_from_cached_github_data(monkeypatch):
     paused = core.build_board()
     assert [c for c in calls if c[0] != "claude"] == []  # only the local session listing ran
     assert paused["isOffline"] and "cached GitHub data" in paused["errors"][0]
-    strip = lambda b: [(c["key"], [s["id"] for s in c["sessions"]]) for c in b["cards"]]  # noqa: E731
+
+    def strip(b):
+        return [(c["key"], [s["id"] for s in c["sessions"]]) for c in b["cards"]]
+
     assert strip(paused) == strip(online)
     assert [s["id"] for s in paused["unlinked"]] == [s["id"] for s in online["unlinked"]]
 
@@ -279,10 +282,13 @@ def test_attach_opens_an_iterm_tab_in_the_session_directory(monkeypatch):
     assert core.main(["attach", "aaaa1111"]) == 0
     osa = calls[-1]
     assert osa[0] == "osascript" and 'tell application "iTerm2"' in osa[2]
-    assert osa[3:] == ["printf '\\033]1;%s\\007' 'fix flaky deploy' && cd '/Users/me/Code/my repo' && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach aaaa1111"]
+    # The tail closes the tab once the session is deleted: its job directory is then gone.
+    assert osa[3:] == [
+        f"printf '\\033]1;%s\\007' 'fix flaky deploy' && cd '/Users/me/Code/my repo' && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach aaaa1111; [ -d {core.JOBS / 'aaaa1111'} ] || exit"
+    ]
     # A session with no recorded directory starts where new sessions do.
     core.attach("bbbb2222", "chart bump")
-    assert calls[-1][3] == f"printf '\\033]1;%s\\007' 'chart bump' && cd {core.SESSION_CWD} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach bbbb2222"
+    assert calls[-1][3] == f"printf '\\033]1;%s\\007' 'chart bump' && cd {core.SESSION_CWD} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach bbbb2222; [ -d {core.JOBS / 'bbbb2222'} ] || exit"
 
 
 def test_tui_draws_columns_and_attaches_selected_session(monkeypatch):
@@ -427,7 +433,7 @@ def test_tui_list_view_groups_rows_and_keeps_the_cursor_off_headings(monkeypatch
             await app.workers.wait_for_complete()
             await pilot.press("g")  # grouping switches within the list view
             await pilot.pause()
-            assert [r.group["title"] for r in app.query(tui.GroupRow)][0] == "Active"
+            assert next(r.group["title"] for r in app.query(tui.GroupRow)) == "Active"
             assert app.current_key() == "card:acme/infra#7"
             await pilot.press("v")  # and back to columns
             await pilot.pause()
@@ -494,7 +500,7 @@ def test_tui_tab_to_another_column_shows_its_card_in_the_detail():
                     break
             assert app.focused is not cols[0]
             assert app.current_key() == tui.BoardApp.item_key(app.focused.highlighted_child)
-            sessions = app.current["sessions"] if "sessions" in app.current else [app.current]
+            sessions = app.current.get("sessions", [app.current])
             assert [r.sess["id"] for r in app.query_one("#sessions").children] == [s["id"] for s in sessions]
 
     asyncio.run(scenario())
@@ -1056,6 +1062,41 @@ def test_rm_deletes_a_background_session_and_drops_its_links_and_refuses_interac
     assert calls[-1] == ["claude", "rm", "cccc3333"] and core.load_links() == {}
     assert core.main(["rm", "eeee5555"]) == 1
     assert "interactive session" in capsys.readouterr().err and calls[-1][:2] == ["claude", "agents"]
+
+
+def test_self_flag_links_and_deletes_the_session_the_command_runs_in(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(core, "run", lambda argv, timeout=60, cwd=None: calls.append(argv) or f"removed {argv[2]}\n")
+    monkeypatch.delenv("CLAUDE_JOB_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert core.main(["rm", "--self"]) == 1
+    assert "only inside a Claude Code session" in capsys.readouterr().err
+    # A background session is its job directory; no `claude agents` call is needed to find it.
+    monkeypatch.setenv("CLAUDE_JOB_DIR", str(core.JOBS / "cccc3333"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "ffff6666-0000-0000")
+    assert core.main(["link", "--self", "acme/infra#9"]) == 0
+    assert core.load_links() == {"cccc3333": ["acme/infra#9"]} and calls == []
+    assert core.main(["link", "--self"]) == 1 and core.main(["rm", "cccc3333", "--self"]) == 1 and core.main(["rm"]) == 1
+    assert core.main(["rm", "--self"]) == 0
+    assert calls == [["claude", "rm", "cccc3333"]] and core.load_links() == {}
+    # An interactive session has no job directory: it links by its short session id and is not deleted.
+    monkeypatch.delenv("CLAUDE_JOB_DIR")
+    assert core.main(["link", "--self", "acme/infra#9"]) == 0
+    assert core.load_links() == {"ffff6666": ["acme/infra#9"]}
+    assert core.main(["rm", "--self"]) == 1
+    assert "interactive session" in capsys.readouterr().err and len(calls) == 1
+
+
+def test_rm_keeps_the_links_when_claude_refuses_to_delete(monkeypatch, capsys):
+    def refuse(argv, timeout=60, cwd=None):
+        if argv[:2] == ["claude", "rm"]:
+            raise RuntimeError("worktree has unpushed commits")
+        return fake_run(argv)
+
+    monkeypatch.setattr(core, "run", refuse)
+    core.link("cccc3333", "acme/infra#9")
+    assert core.main(["rm", "cccc3333"]) == 1
+    assert "unpushed commits" in capsys.readouterr().err and core.load_links() == {"cccc3333": ["acme/infra#9"]}
 
 
 def test_tui_ctrl_x_stops_or_deletes_the_selected_session(monkeypatch):

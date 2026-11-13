@@ -9,10 +9,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 
 from textual import events, on, work
 from textual.app import App, ComposeResult, SuspendNotSupported
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.markup import escape
 from textual.screen import ModalScreen
@@ -267,7 +268,7 @@ class CardList(ListView):
     A click on an issue card only highlights it; ListView would also select it, which moves the focus to its sessions.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("home", "first", "First", show=False),
         Binding("end", "last", "Last", show=False),
     ]
@@ -309,7 +310,7 @@ class CardList(ListView):
 class GroupedList(CardList):
     """Tab and shift+tab jump between groups, like moving between the board's columns, and leave the list past either end."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("tab", "group_step(1)", "Next group", show=False),
         Binding("shift+tab", "group_step(-1)", "Previous group", show=False),
     ]
@@ -337,7 +338,7 @@ SESS_CELLS = ["s-state", "s-name", "s-ago", "s-id", "s-prs", "s-result"]
 class WordInput(Input):
     """A one-line field where option+arrows move by word, as in macOS text fields."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("alt+left", "cursor_left_word", show=False),
         Binding("alt+right", "cursor_right_word", show=False),
         Binding("alt+shift+left", "cursor_left_word(True)", show=False),
@@ -348,7 +349,7 @@ class WordInput(Input):
 class PromptArea(TextArea):
     """A text box where option+arrows move by word (up/down: to the start/end of the text) and ctrl+g edits it in $VISUAL/$EDITOR."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("alt+left", "cursor_word_left", show=False),
         Binding("alt+right", "cursor_word_right", show=False),
         Binding("alt+shift+left", "cursor_word_left(True)", show=False),
@@ -373,7 +374,7 @@ class PromptArea(TextArea):
         path = Path(f.name)
         try:
             with self.app.suspend():
-                done = subprocess.run([*editor, str(path)])
+                done = subprocess.run([*editor, str(path)], check=False)
             if done.returncode != 0:
                 self.notify(f"{editor[0]} exited with {done.returncode}; the text is unchanged.", severity="warning")
                 return
@@ -391,7 +392,7 @@ class PromptArea(TextArea):
 class FilterInput(WordInput):
     """The search box: typing filters the board live, enter goes to the matches, esc clears it and closes."""
 
-    BINDINGS = [Binding("escape", "clear", "Clear filter", show=False)]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "clear", "Clear filter", show=False)]
 
     def show(self, on: bool) -> None:
         # Hidden, it must not take the focus Textual hands out at startup or on tab.
@@ -406,7 +407,7 @@ class FilterInput(WordInput):
 
 
 class Ask(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, question: str, placeholder: str = "") -> None:
         super().__init__()
@@ -432,7 +433,7 @@ class AskPrompt(ModalScreen[tuple[str, bool, bool] | None]):
     (ticked by default for Todo, unticked for any other status), and with offer_attach to attach to the new session (unticked by default); the answer is
     (prompt, move it, attach). With required, an empty prompt keeps the box open."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("enter", "submit", "Start", priority=True)]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel"), Binding("enter", "submit", "Start", priority=True)]
 
     def __init__(self, question: str, progress_from: str = "", required: bool = False, offer_attach: bool = False) -> None:
         super().__init__()
@@ -464,7 +465,7 @@ class AskPrompt(ModalScreen[tuple[str, bool, bool] | None]):
 class NewIssue(ModalScreen[dict | None]):
     """Repo, title, optional body and assignment for a new issue; enter in the title or ctrl+s creates it."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "create", "Create", priority=True)]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "create", "Create", priority=True)]
     AUTO_FOCUS = "#issue-title"
 
     def compose(self) -> ComposeResult:
@@ -498,7 +499,7 @@ class NewIssue(ModalScreen[dict | None]):
 class StopOrDelete(ModalScreen[str | None]):
     """Stop (s) or delete (d) a background session; the dialog is the confirmation."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("s", "pick('stop')", "Stop"), Binding("d", "pick('delete')", "Delete")]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel"), Binding("s", "pick('stop')", "Stop"), Binding("d", "pick('delete')", "Delete")]
 
     def __init__(self, sess: dict) -> None:
         super().__init__()
@@ -615,7 +616,7 @@ class BoardApp(App):
     StopOrDelete #ask .title {{ margin-bottom: 1; }}
     StopOrDelete #ask .hint {{ margin-top: 1; }}
     """
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "attach", "Attach", show=True, priority=False),
         Binding("slash", "search", "Search"),
         Binding("n", "new", "New session"),
