@@ -123,7 +123,7 @@ def graphql(query: str, variables: dict | None = None) -> dict:
 def backoff_until() -> float:
     try:
         return float(json.loads((CONFIG / "backoff.json").read_text())["until"])
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+    except FileNotFoundError, json.JSONDecodeError, KeyError, ValueError:
         return 0.0
 
 
@@ -207,7 +207,7 @@ def parse_time_ms(value: str | None) -> int:
 def load_links() -> dict[str, list[str]]:
     try:
         return json.loads((CONFIG / "links.json").read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         return {}
 
 
@@ -222,7 +222,7 @@ def save_links(links: dict[str, list[str]]) -> None:
 def load_hidden() -> set[str]:
     try:
         return set(json.loads((CONFIG / "hidden.json").read_text()))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         return set()
 
 
@@ -242,7 +242,7 @@ def read_sessions(links: dict[str, list[str]], errors: list[str]) -> list[tuple[
     for d in sorted(JOBS.iterdir()) if JOBS.is_dir() else []:
         try:
             st = json.loads((d / "state.json").read_text())
-        except (FileNotFoundError, NotADirectoryError, json.JSONDecodeError):
+        except FileNotFoundError, NotADirectoryError, json.JSONDecodeError:
             continue
         pr_hrefs = [c["href"] for c in st.get("children") or [] if c.get("kind") == "pr" and c.get("href")]
         refs = parse_refs(st.get("intent") or "") + parse_refs(" ".join(pr_hrefs))
@@ -330,7 +330,7 @@ def read_cache(name: str, ttl: float, force: bool, offline: bool) -> tuple[list 
     try:
         cached = json.loads((CONFIG / name).read_text())
         items, age = cached["items"], time.time() - cached["at"]
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+    except FileNotFoundError, json.JSONDecodeError, KeyError, TypeError:
         return None, False
     return items, offline or (not force and age < ttl)
 
@@ -414,7 +414,7 @@ def resolve_refs(refs: list[Ref], errors: list[str], force: bool = False, offlin
     cache_file = CONFIG / "meta-cache.json"
     try:
         cache: dict[str, dict] = json.loads(cache_file.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError, json.JSONDecodeError:
         cache = {}
     now = time.time()
     uniq = list({key_of(r): r for r in refs}.values())
@@ -742,7 +742,7 @@ def create_issue(repo: str, title: str, body: str = "", assign: bool = True) -> 
             cached = json.loads((CONFIG / "assigned-cache.json").read_text())
             cached["items"] = [issue, *cached["items"]]
             (CONFIG / "assigned-cache.json").write_text(json.dumps(cached))
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except OSError, json.JSONDecodeError, KeyError, TypeError:
             pass  # no cache yet: the next refresh searches anyway
     return {"key": key_of((m[1], m[2], int(m[3]))), "url": url, "title": issue["title"]}
 
@@ -770,7 +770,7 @@ def start_progress(card: dict) -> bool:
             if it.get("itemId") == item["itemId"]:
                 it["status"] = option["name"]
         (CONFIG / "projects-cache.json").write_text(json.dumps(cached))
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+    except OSError, json.JSONDecodeError, KeyError, TypeError:
         pass  # no cache: the next refresh fetches the projects anyway
     return True
 
