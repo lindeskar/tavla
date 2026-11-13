@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,7 +9,7 @@ from tavla import board as core
 
 REAL_GRAPHQL = core.graphql  # the autouse fixture swaps in a fake
 
-NOW = datetime.now(timezone.utc).isoformat()
+NOW = datetime.now(UTC).isoformat()
 JOBS = {
     "aaaa1111": {"name": "fix flaky deploy", "state": "blocked", "intent": "https://github.com/acme/infra/issues/7 look", "updatedAt": NOW, "cwd": "/Users/me/Code/my repo"},
     "bbbb2222": {"name": "chart bump", "state": "working", "intent": "bump it", "children": [{"kind": "pr", "href": "https://github.com/acme/charts/pull/40"}], "updatedAt": NOW},
@@ -168,7 +168,10 @@ def test_paused_board_links_sessions_from_cached_github_data(monkeypatch):
     paused = core.build_board()
     assert [c for c in calls if c[0] != "claude"] == []  # only the local session listing ran
     assert paused["isOffline"] and "cached GitHub data" in paused["errors"][0]
-    strip = lambda b: [(c["key"], [s["id"] for s in c["sessions"]]) for c in b["cards"]]  # noqa: E731
+
+    def strip(b):
+        return [(c["key"], [s["id"] for s in c["sessions"]]) for c in b["cards"]]
+
     assert strip(paused) == strip(online)
     assert [s["id"] for s in paused["unlinked"]] == [s["id"] for s in online["unlinked"]]
 
@@ -427,7 +430,7 @@ def test_tui_list_view_groups_rows_and_keeps_the_cursor_off_headings(monkeypatch
             await app.workers.wait_for_complete()
             await pilot.press("g")  # grouping switches within the list view
             await pilot.pause()
-            assert [r.group["title"] for r in app.query(tui.GroupRow)][0] == "Active"
+            assert next(r.group["title"] for r in app.query(tui.GroupRow)) == "Active"
             assert app.current_key() == "card:acme/infra#7"
             await pilot.press("v")  # and back to columns
             await pilot.pause()
@@ -494,7 +497,7 @@ def test_tui_tab_to_another_column_shows_its_card_in_the_detail():
                     break
             assert app.focused is not cols[0]
             assert app.current_key() == tui.BoardApp.item_key(app.focused.highlighted_child)
-            sessions = app.current["sessions"] if "sessions" in app.current else [app.current]
+            sessions = app.current.get("sessions", [app.current])
             assert [r.sess["id"] for r in app.query_one("#sessions").children] == [s["id"] for s in sessions]
 
     asyncio.run(scenario())

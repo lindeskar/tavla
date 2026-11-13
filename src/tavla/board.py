@@ -15,6 +15,7 @@ import sys
 import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
 
 JOBS = Path.home() / ".claude" / "jobs"
@@ -99,7 +100,7 @@ class RateLimited(RuntimeError):
 
 
 def run(argv: list[str], timeout: int = 60, cwd: Path | None = None) -> str:
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd, check=False)
     if p.returncode != 0:
         msg = f"{' '.join(argv[:3])}: {(p.stderr or p.stdout).strip()[:200]}"
         raise RateLimited(msg) if "rate limit" in msg.lower() else RuntimeError(msg)
@@ -111,7 +112,7 @@ def graphql(query: str, variables: dict | None = None) -> dict:
     argv = ["gh", "api", "graphql", "-f", f"query={query}"]
     for name, value in (variables or {}).items():
         argv += ["-F" if isinstance(value, int) else "-f", f"{name}={value}"]
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
     body = json.loads(p.stdout or "{}")
     # Judge only gh's own message and GraphQL's error entries: data (an issue title) may say "rate limit" too.
     messages = [p.stderr, *(f"{e.get('type', '')} {e.get('message', '')}" for e in body.get("errors") or [])]
@@ -133,18 +134,14 @@ def start_backoff() -> float:
     The GraphQL budget is read from GraphQL's own rateLimit: the REST /rate_limit graphql bucket can
     report plenty remaining while GraphQL itself refuses every query. `gh search` spends GraphQL too."""
     until = time.time() + 90
-    try:
+    with suppress(Exception):  # the 90s default stands
         rl = (graphql("{ rateLimit { remaining resetAt } }").get("data") or {}).get("rateLimit") or {}
         if rl.get("remaining") == 0:
             until = max(until, parse_time_ms(rl["resetAt"]) / 1000)
-    except Exception:  # noqa: BLE001 - the 90s default stands
-        pass
-    try:
+    with suppress(Exception):
         search = json.loads(run(["gh", "api", "rate_limit"], timeout=20))["resources"]["search"]
         if search["remaining"] == 0:
             until = max(until, float(search["reset"]))
-    except Exception:  # noqa: BLE001
-        pass
     CONFIG.mkdir(parents=True, exist_ok=True)
     (CONFIG / "backoff.json").write_text(json.dumps({"until": until}))
     return until
@@ -196,7 +193,7 @@ def parse_time_ms(value: str | None) -> int:
     try:
         from datetime import datetime
 
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        return int(datetime.fromisoformat(value).timestamp() * 1000)
     except ValueError:
         return 0
 
