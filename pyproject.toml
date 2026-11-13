@@ -1,6 +1,6 @@
 [project]
 name = "tavla"
-version = "0.1.0"
+version = "1.0.0"
 description = "Terminal kanban of GitHub issues with the Claude Code sessions working on each"
 readme = "README.md"
 license = "MIT"
