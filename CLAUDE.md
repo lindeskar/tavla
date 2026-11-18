@@ -5,7 +5,7 @@
 ## Layout
 
 - `src/tavla/board.py`: the core, with no UI. GitHub and `claude` calls, caches, the session-to-issue linking, `build_board()`, the `config.toml` loader (`load_config`), and the `tavla <command>` CLI (`main`).
-- `src/tavla/tui.py`: the Textual app (`BoardApp`), its widgets, modals and key bindings. GitHub and `claude` calls go through `board`; the TUI only runs `$EDITOR` and `open` itself.
+- `src/tavla/tui.py`: the Textual app (`BoardApp`), its widgets, modals and key bindings. GitHub and `claude` calls go through `board`; the TUI only runs `$EDITOR` and `open` (`xdg-open` off macOS) itself.
 - `src/tavla/__main__.py`: entry point. No args opens the TUI, any args go to `board.main`.
 - `tests/test_core.py`: core and TUI tests in one file.
 
@@ -32,7 +32,7 @@
 
 - The autouse `env` fixture points `JOBS` and `CONFIG` at `tmp_path`, sets the config globals to made-up projects and repos, and swaps `core.run` and `core.graphql` for `fake_run` and `fake_graphql`. `fake_run` raises on any command it doesn't know, so a new `gh` or `claude` invocation needs a branch there.
 - TUI tests drive `tui.BoardApp().run_test(size=...)` with the pilot. Wait for `app.workers.wait_for_complete()` before asserting, and settle the layout (`pilot.wait_for_scheduled_animations()`, then a short `pilot.pause`) before clicking.
-- Patch side effects (`core.attach`, `app.open_url`, the external editor) with `monkeypatch`; no test opens iTerm2, a browser or a real session.
+- Patch side effects (`core.attach`, `app.open_url`, the external editor) with `monkeypatch`; no test opens a terminal tab, a browser or a real session.
 - A behaviour change or a bug fix comes with a test named for the behaviour (`test_tui_<what the user sees>`).
 
 ## Changes

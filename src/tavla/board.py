@@ -10,10 +10,12 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 import tomllib
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -32,9 +34,32 @@ ISSUE_REPOS: list[tuple[str, str]] = []
 # Where `new` starts background sessions.
 SESSION_CWD = Path.cwd()
 THEME = "tavla"
-# The terminal app `attach` opens tabs in.
-TERMINALS = {"iterm2": "iTerm2", "ghostty": "Ghostty"}
-TERMINAL = "ghostty" if os.environ.get("TERM_PROGRAM") == "ghostty" else "iterm2"
+# The terminal app `attach` opens tabs in. iTerm2 and Ghostty are scripted with AppleScript (macOS);
+# the others have a command that opens a tab, in ATTACH_ARGV.
+TERMINALS = {"iterm2": "iTerm2", "ghostty": "Ghostty", "tmux": "tmux", "gnome-terminal": "GNOME Terminal", "konsole": "Konsole", "terminator": "Terminator", "kitty": "kitty", "wezterm": "WezTerm"}
+# {script} is the shell line to run in the new tab, {title} the tab's name, {cwd} the session's directory.
+ATTACH_ARGV = {
+    "tmux": ["tmux", "new-window", "-n", "{title}", "sh", "-c", "{script}"],
+    "gnome-terminal": ["gnome-terminal", "--tab", "--", "sh", "-c", "{script}"],
+    "konsole": ["konsole", "--new-tab", "-e", "sh", "-c", "{script}"],
+    "terminator": ["terminator", "--new-tab", "-x", "sh", "-c", "{script}"],
+    "kitty": ["kitty", "@", "launch", "--type=tab", "--tab-title", "{title}", "sh", "-c", "{script}"],
+    "wezterm": ["wezterm", "cli", "spawn", "--", "sh", "-c", "{script}"],
+}
+
+
+def detect_terminal(env: Mapping[str, str] = os.environ, platform: str = sys.platform) -> str:
+    """The terminal tavla runs in, or "" when it is not a known one. tmux comes first: inside it the
+    outer terminal's variables are still set."""
+    if platform == "darwin":
+        return "ghostty" if env.get("TERM_PROGRAM") == "ghostty" else "iterm2"
+    seen = {"TMUX": "tmux", "KITTY_WINDOW_ID": "kitty", "WEZTERM_PANE": "wezterm", "TERMINATOR_UUID": "terminator", "KONSOLE_VERSION": "konsole", "GNOME_TERMINAL_SCREEN": "gnome-terminal"}
+    return next((name for var, name in seen.items() if env.get(var)), "")
+
+
+TERMINAL = detect_terminal()
+# A command of your own that opens the tab, from `attach_command` in the config file; it wins over TERMINAL.
+ATTACH_COMMAND: list[str] = []
 PROJECT_TTL_S = 300
 ASSIGNED_TTL_S = 300  # open issues assigned to me
 META_TTL_S = 600  # issue/PR metadata: labels, sub-issues, linked PRs, open state
@@ -86,8 +111,8 @@ Ref = tuple[str, str, int]
 
 
 def load_config() -> None:
-    """Set PROJECTS, ISSUE_REPOS, SESSION_CWD, THEME and TERMINAL from CONFIG/config.toml; a missing file leaves the defaults."""
-    global PROJECTS, ISSUE_REPOS, SESSION_CWD, THEME, TERMINAL
+    """Set PROJECTS, ISSUE_REPOS, SESSION_CWD, THEME, TERMINAL and ATTACH_COMMAND from CONFIG/config.toml; a missing file leaves the defaults."""
+    global PROJECTS, ISSUE_REPOS, SESSION_CWD, THEME, TERMINAL, ATTACH_COMMAND
     path = CONFIG / "config.toml"
     try:
         cfg = tomllib.loads(path.read_text())
@@ -104,9 +129,12 @@ def load_config() -> None:
     if bad:
         raise ValueError(f"{path}: issue_repos repo must be owner/repo, got {bad[0]!r}")
     terminal = str(cfg.get("terminal") or TERMINAL).lower()
-    if terminal not in TERMINALS:
+    if terminal and terminal not in TERMINALS:
         raise ValueError(f"{path}: terminal must be one of {', '.join(TERMINALS)}, got {terminal!r}")
-    PROJECTS, ISSUE_REPOS, TERMINAL = projects, repos, terminal
+    command = cfg.get("attach_command") or []
+    if not isinstance(command, list) or not all(isinstance(a, str) for a in command) or (command and not any("{script}" in a for a in command)):
+        raise ValueError(f"{path}: attach_command must be a list of strings, one of them holding {{script}}")
+    PROJECTS, ISSUE_REPOS, TERMINAL, ATTACH_COMMAND = projects, repos, terminal, command
     if cfg.get("session_dir"):
         SESSION_CWD = Path(str(cfg["session_dir"])).expanduser()
     THEME = str(cfg.get("theme") or THEME)
@@ -873,13 +901,37 @@ def attach(session_id: str, title: str = "", dry_run: bool = False, cwd: str = "
     the shell's directory, which in a new tab is the home directory. The tab is named with an OSC 1
     escape from its own shell, as iTerm2 does not show a name set through AppleScript, and Claude
     Code's own terminal title is switched off so the tab keeps that name. Ghostty ignores the escape
-    and gets the name as a tab name override instead."""
-    name = shlex.quote(title or session_id)
-    cmd = f"printf '\\033]1;%s\\007' {name} && cd {shlex.quote(cwd or str(SESSION_CWD))} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}; [ -d {shlex.quote(str(JOBS / session_id))} ] || exit"
-    argv = ["osascript", "-e", GHOSTTY_SCRIPT, cmd, title or session_id] if TERMINAL == "ghostty" else ["osascript", "-e", ITERM_SCRIPT, cmd]
+    and gets the name as a tab name override instead.
+
+    The other terminals (ATTACH_ARGV, or `attach_command` from the config file) run a command in the
+    new tab rather than typing into its shell, so the line ends by starting a shell for the tab to
+    stay open on, names the tab with OSC 2, and calls `claude` by its full path: a tab opened by a
+    terminal's server process need not have the PATH tavla runs with. The return value is then the
+    whole command, for `--dry-run`."""
+    name, where = title or session_id, cwd or str(SESSION_CWD)
+    gone = f"[ -d {shlex.quote(str(JOBS / session_id))} ] || exit"
+    template = ATTACH_COMMAND or ATTACH_ARGV.get(TERMINAL)
+    if template:
+        claude = shlex.quote(shutil.which("claude") or "claude")
+        script = f"printf '\\033]2;%s\\007' {shlex.quote(name)}; cd {shlex.quote(where)} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 {claude} attach {session_id}; {gone}; exec \"${{SHELL:-sh}}\""
+        values = {"script": script, "title": name, "cwd": where}
+        argv = [re.sub(r"\{(script|title|cwd)\}", lambda m: values[m[1]], a) for a in template]
+        cmd = shlex.join(argv)
+    elif TERMINAL in ("iterm2", "ghostty"):
+        cmd = f"printf '\\033]1;%s\\007' {shlex.quote(name)} && cd {shlex.quote(where)} && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude attach {session_id}; {gone}"
+        argv = ["osascript", "-e", GHOSTTY_SCRIPT, cmd, name] if TERMINAL == "ghostty" else ["osascript", "-e", ITERM_SCRIPT, cmd]
+    else:
+        raise ValueError(f"tavla does not know the terminal it runs in: set terminal (one of {', '.join(TERMINALS)}) or attach_command in {CONFIG / 'config.toml'}")
     if not dry_run:
-        run(argv, timeout=20)
+        try:
+            run(argv, timeout=20)
+        except FileNotFoundError as err:
+            raise RuntimeError(f"{argv[0]} is not installed or not on PATH") from err
     return cmd
+
+
+def terminal_label() -> str:
+    return ATTACH_COMMAND[0] if ATTACH_COMMAND else TERMINALS.get(TERMINAL, "terminal")
 
 
 def new_session(target: str, prompt: str = "", title: str = "") -> str:
