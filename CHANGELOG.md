@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0](https://github.com/lindeskar/tavla/compare/v1.1.0...v1.2.0) (2026-11-18)
+
+
+### Features
+
+* a sub-issue's card names its parent issue in the parent's colour, search matches the parent's title and repo#N, and the list view groups by parent issue (g) ([160539d](https://github.com/lindeskar/tavla/commit/160539d6dcc914dec1ed29bf37887f11662de669))
+* attaching opens a Ghostty tab when tavla runs in Ghostty, or when terminal = "ghostty" is set in the config file ([705fc5b](https://github.com/lindeskar/tavla/commit/705fc5b7c6ec29b2aeb7b4e5bc31faf216b7885b))
+* the board is drawn from the cached GitHub data the moment tavla starts, and keeps its cached project statuses when GitHub can't be reached ([98581f6](https://github.com/lindeskar/tavla/commit/98581f622c09406a00512f86cef4ef23d6c36bd5))
+
+
+### Bug Fixes
+
+* cards show their parent issue on the first refresh after upgrading, not only once the cached metadata from the older version has expired ([7f9dab1](https://github.com/lindeskar/tavla/commit/7f9dab1aad3ce0633dbcdf5bac642388e6796b90))
+
 ## [1.1.0](https://github.com/lindeskar/tavla/compare/v1.0.0...v1.1.0) (2026-11-17)
 
 
