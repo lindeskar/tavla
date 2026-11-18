@@ -1013,7 +1013,7 @@ class BoardApp(App):
             return
         try:
             core.attach(sess["id"], sess["name"], cwd=sess.get("cwd") or "")
-            self.call_from_thread(self.notify, f"Attached {sess['id']} in a new {core.TERMINALS[core.TERMINAL]} tab")
+            self.call_from_thread(self.notify, f"Attached {sess['id']} in a new {core.terminal_label()} tab")
         except Exception as err:  # noqa: BLE001
             self.call_from_thread(self.notify, f"Attach failed: {err}", severity="error")
 
@@ -1062,7 +1062,7 @@ class BoardApp(App):
 
     def action_open(self) -> None:
         if self.current and self.current.get("url"):
-            subprocess.run(["open", self.current["url"]], check=False)
+            subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", self.current["url"]], check=False)
 
     def action_new(self) -> None:
         card = self.current if self.current and "sessions" in self.current else None
@@ -1210,12 +1210,12 @@ def run(out=sys.stdout) -> None:
     """Name the terminal tab after the board while it runs, then restore the previous name.
 
     The xterm title stack (CSI 22/23) saves and restores the name. OSC 1 sets iTerm2's tab title;
-    Ghostty names a tab after the window title, which is OSC 2."""
+    Ghostty and the other terminals name a tab after the window title, which is OSC 2."""
     try:
         core.load_config()
     except ValueError as err:
         sys.exit(f"error: {err}")
-    osc = 2 if core.TERMINAL == "ghostty" else 1
+    osc = 1 if core.TERMINAL == "iterm2" else 2
     out.write(f"\x1b[22;{osc}t\x1b]{osc};{BoardApp.TITLE}\x07")
     out.flush()
     try:

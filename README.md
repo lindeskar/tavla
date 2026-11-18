@@ -6,7 +6,7 @@ A terminal app to manage agent sessions: GitHub issues on a kanban board, each c
 
 ## Requirements
 
-- macOS with [iTerm2](https://iterm2.com) or [Ghostty](https://ghostty.org) 1.3 or later: attaching to a session opens a new tab there.
+- macOS with [iTerm2](https://iterm2.com) or [Ghostty](https://ghostty.org) 1.3 or later, or Linux with tmux, GNOME Terminal, Konsole, Terminator, kitty or WezTerm: attaching to a session opens a new tab there. Any other terminal works with an `attach_command` of your own in the config file. Linux support is new and its terminal commands are not yet tried on a real machine: `tavla attach <id> --dry-run` prints the command without running it.
 - [Claude Code](https://claude.com/claude-code) as `claude` on `PATH`, a version with background sessions (`claude --bg`, `claude agents`).
 - [GitHub CLI](https://cli.github.com) as `gh`, signed in with the `project` scope so it can read and set project status: `gh auth refresh -s project`.
 - [uv](https://docs.astral.sh/uv/) to install it.
@@ -37,9 +37,16 @@ session_dir = "~/Code/my-notes"
 # "tavla" (the default) or any built-in Textual theme, e.g. "nord" or "textual-light".
 theme = "tavla"
 
-# Where attaching opens its tab: "iterm2" or "ghostty". Default: "ghostty" when tavla
-# runs inside Ghostty (TERM_PROGRAM), otherwise "iterm2".
+# Where attaching opens its tab. On macOS "iterm2" or "ghostty"; on Linux (or macOS)
+# "tmux", "gnome-terminal", "konsole", "terminator", "kitty" or "wezterm".
+# Default on macOS: "ghostty" when tavla runs inside Ghostty (TERM_PROGRAM), otherwise
+# "iterm2". Default on Linux: the terminal tavla runs in, tmux first.
 terminal = "ghostty"
+
+# Your own command for opening the tab, for a terminal not in that list; it replaces
+# `terminal`. {script} is the shell line to run in the tab, {title} the session's name
+# and {cwd} its directory.
+# attach_command = ["alacritty", "--title", "{title}", "-e", "sh", "-c", "{script}"]
 
 # GitHub Projects whose Status field places a card in a column, in precedence order:
 # the first project that holds the issue wins. The non-Done items of a project marked
@@ -88,7 +95,7 @@ While it runs, the terminal tab is named "Tavla"; the previous name comes back o
 | `ctrl+x` | Stop or delete the selected session: `s` stops it (`claude stop`; the conversation is kept and attaching resumes it), `d` deletes it and its worktree (`claude rm`, which refuses while the worktree has unpushed commits) and drops its manual links (the card keeps it under `Deleted`, where `enter` resumes it), `esc` cancels. Acts on the highlighted row in the sessions panel, an unlinked session, or a card's only session; interactive sessions are stopped in their own terminal |
 | `h` | Hide the selected issue from the board and the list, or unhide it. Kept locally in `~/.config/tavla/hidden.json` |
 | `H` | Show or leave out hidden issues (left out at every start). Shown, a hidden card is dimmed and tagged `⊘ hidden`; the status line counts the hidden issues |
-| `o` | Open the issue in the browser |
+| `o` | Open the issue in the browser (`open` on macOS, `xdg-open` elsewhere) |
 | `g` | Group by issue status or by session state |
 | `v` | Switch between the board (columns) and a grouped list |
 | `r` | Refresh now (also bypasses the project status cache) |
@@ -110,6 +117,19 @@ A new issue is assigned to you unless you untick it in the dialog, and goes stra
 New sessions start in `session_dir` from the config file, or in the directory `tavla` was started in.
 
 Attaching opens a new tab in the current iTerm2 or Ghostty window (the `terminal` key in the config file; by default the one `tavla` runs in), moves to the session's own directory (or `session_dir` when it has none recorded) and runs `claude attach <id>` there, so waking a finished session doesn't start it in your home directory. The tab is named after the session with an OSC 1 escape from its own shell (iTerm2 does not show a name set through AppleScript), and `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` stops Claude Code from overwriting that name with its own title. Detaching leaves the tab's shell open; deleting the session (`ctrl+x` `d`, `tavla rm`, `claude rm`) closes the tab, provided the iTerm2 profile closes a session when its shell exits. The first attach asks macOS for permission to control iTerm2.
+
+The other terminals open the tab with their own command, and `attach_command` in the config file replaces it:
+
+| `terminal` | Command | Needs |
+| --- | --- | --- |
+| `tmux` | `tmux new-window -n <name> sh -c <script>` | `tavla` running inside tmux |
+| `gnome-terminal` | `gnome-terminal --tab -- sh -c <script>` | |
+| `konsole` | `konsole --new-tab -e sh -c <script>` | |
+| `terminator` | `terminator --new-tab -x sh -c <script>` | Terminator's DBus server, which is on by default |
+| `kitty` | `kitty @ launch --type=tab --tab-title <name> sh -c <script>` | `allow_remote_control yes` in `kitty.conf` |
+| `wezterm` | `wezterm cli spawn -- sh -c <script>` | |
+
+The script names the tab with an OSC 2 escape, moves to the session's directory, runs `claude attach <id>` (by its full path, as a tab opened by the terminal's own server process need not have your `PATH`) and then starts `$SHELL`, so detaching leaves a shell open there; once the session is deleted it exits instead and the tab closes. On Linux a terminal that is not recognised from its environment gets no default: attaching then says to set `terminal` or `attach_command`.
 
 ## Core CLI
 

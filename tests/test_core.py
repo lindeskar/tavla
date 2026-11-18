@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import shlex
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -136,6 +137,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "SESSION_CWD", tmp_path)
     monkeypatch.setattr(core, "THEME", "tavla")
     monkeypatch.setattr(core, "TERMINAL", "iterm2")
+    monkeypatch.setattr(core, "ATTACH_COMMAND", [])
     monkeypatch.setattr(core, "run", fake_run)
     monkeypatch.setattr(core, "graphql", fake_graphql)
     GRAPHQL_CALLS.clear()
@@ -403,6 +405,66 @@ def test_config_picks_the_terminal_and_rejects_an_unknown_one(monkeypatch):
     (core.CONFIG / "config.toml").write_text('terminal = "xterm"\n')
     with pytest.raises(ValueError, match="terminal must be one of iterm2, ghostty"):
         core.load_config()
+
+
+def test_terminal_is_detected_from_the_environment_outside_macos():
+    assert core.detect_terminal({"TERM_PROGRAM": "ghostty"}, "darwin") == "ghostty"
+    assert core.detect_terminal({"TMUX": "/tmp/tmux-1000/default,1,0"}, "darwin") == "iterm2"
+    assert core.detect_terminal({"TERMINATOR_UUID": "urn:uuid:1"}, "linux") == "terminator"
+    assert core.detect_terminal({"GNOME_TERMINAL_SCREEN": "/org/gnome/Terminal/screen/1"}, "linux") == "gnome-terminal"
+    # Inside tmux the outer terminal's variables are still set, and the new tab belongs in tmux.
+    assert core.detect_terminal({"TERMINATOR_UUID": "urn:uuid:1", "TMUX": "/tmp/tmux-1000/default,1,0"}, "linux") == "tmux"
+    assert core.detect_terminal({"TERM": "xterm-256color"}, "linux") == ""
+
+
+def test_attach_runs_the_terminals_own_new_tab_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(core, "run", lambda argv, timeout=60, cwd=None: calls.append(argv) or "")
+    monkeypatch.setattr(core.shutil, "which", lambda name: f"/opt/bin/{name}")
+    monkeypatch.setattr(core, "TERMINAL", "terminator")
+    printed = core.attach("aaaa1111", "fix flaky deploy", cwd="/home/me/Code/my repo")
+    # The tab runs the line itself, so it ends in a shell to stay open on, unless the session is deleted.
+    script = (
+        "printf '\\033]2;%s\\007' 'fix flaky deploy'; cd '/home/me/Code/my repo' && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 /opt/bin/claude attach aaaa1111; "
+        f'[ -d {core.JOBS / "aaaa1111"} ] || exit; exec "${{SHELL:-sh}}"'
+    )
+    assert calls[-1] == ["terminator", "--new-tab", "-x", "sh", "-c", script]
+    assert printed == shlex.join(calls[-1])
+    monkeypatch.setattr(core, "TERMINAL", "tmux")
+    core.attach("bbbb2222", "chart {cwd} bump")
+    assert calls[-1][:4] == ["tmux", "new-window", "-n", "chart {cwd} bump"] and f"cd {core.SESSION_CWD} && " in calls[-1][-1]
+    # --dry-run prints the command and opens nothing.
+    assert core.attach("bbbb2222", dry_run=True).startswith("tmux new-window -n bbbb2222 sh -c ") and len(calls) == 2
+
+
+def test_attach_command_in_the_config_file_replaces_the_terminal(monkeypatch):
+    calls = []
+    monkeypatch.setattr(core, "run", lambda argv, timeout=60, cwd=None: calls.append(argv) or "")
+    core.CONFIG.mkdir(parents=True, exist_ok=True)
+    (core.CONFIG / "config.toml").write_text('attach_command = ["alacritty", "--title", "{title}", "--working-directory", "{cwd}", "-e", "sh", "-c", "{script}"]\n')
+    core.load_config()
+    core.attach("aaaa1111", "fix flaky deploy", cwd="/home/me/repo")
+    assert calls[-1][:7] == ["alacritty", "--title", "fix flaky deploy", "--working-directory", "/home/me/repo", "-e", "sh"] and " attach aaaa1111; " in calls[-1][-1]
+    assert core.terminal_label() == "alacritty"
+    (core.CONFIG / "config.toml").write_text('attach_command = ["xterm", "-e"]\n')
+    with pytest.raises(ValueError, match="attach_command must be a list of strings"):
+        core.load_config()
+
+
+def test_attach_says_what_to_configure_when_the_terminal_is_unknown_or_missing(monkeypatch, capsys):
+    monkeypatch.setattr(core, "TERMINAL", "")
+    assert core.main(["attach", "aaaa1111"]) == 1
+    assert "set terminal (one of iterm2, ghostty, tmux," in capsys.readouterr().err
+
+    def missing(argv, timeout=60, cwd=None):
+        if argv[0] == "konsole":
+            raise FileNotFoundError(argv[0])
+        return fake_run(argv, timeout, cwd)
+
+    monkeypatch.setattr(core, "run", missing)
+    monkeypatch.setattr(core, "TERMINAL", "konsole")
+    assert core.main(["attach", "aaaa1111"]) == 1
+    assert "konsole is not installed or not on PATH" in capsys.readouterr().err
 
 
 def test_attach_opens_an_iterm_tab_in_the_session_directory(monkeypatch):
