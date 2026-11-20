@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/lindeskar/tavla/compare/v1.2.0...v1.3.0) (2026-11-20)
+
+
+### Features
+
+* a finished session on no issue stays under Unlinked for 10 days instead of 3, and unlinked_days in config.toml sets how long ([ae3f1f2](https://github.com/lindeskar/tavla/commit/ae3f1f23489d96f09caddffb4f02b1223f9abdae))
+* the keys 1-9 filter the board and the list on a parent issue, numbered on its cards and group heading; the same key or esc shows everything again ([4287cf6](https://github.com/lindeskar/tavla/commit/4287cf60bff31d3bac78f1cf80fdf9b6b078c123))
+
 ## [1.2.0](https://github.com/lindeskar/tavla/compare/v1.1.0...v1.2.0) (2026-11-18)
 
 
