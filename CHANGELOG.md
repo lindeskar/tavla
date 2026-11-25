@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/lindeskar/tavla/compare/v1.3.0...v1.4.0) (2026-11-25)
+
+
+### Features
+
+* attaching in iTerm2 to a session that a tab is already attached to switches to that tab instead of opening another ([5d5994f](https://github.com/lindeskar/tavla/commit/5d5994f0bb0bed76b9be3a0ffc69bba52f5ee151))
+
 ## [1.3.0](https://github.com/lindeskar/tavla/compare/v1.2.0...v1.3.0) (2026-11-23)
 
 
